@@ -1,3 +1,18 @@
+import discord
+import os
+import logging
+from discord.ext import commands
+from dotenv import load_dotenv
+import wavelink  # <-- IMPORTANTE
+
+# --- CONFIGURACIÓN ---
+logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
+load_dotenv()
+TOKEN = os.getenv('DISCORD_TOKEN')
+
+intents = discord.Intents.default()
+intents.message_content = True 
+intents.members = True
 
 class HerxinBot(commands.Bot):
     def __init__(self):
