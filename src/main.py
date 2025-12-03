@@ -1,62 +1,96 @@
-import discord
-import os
-import logging
-from discord.ext import commands
-from dotenv import load_dotenv
-
-# --- CONFIGURACIÓN ---
-logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(levelname)s | %(message)s')
-load_dotenv()
-TOKEN = os.getenv('DISCORD_TOKEN')
-
-intents = discord.Intents.default()
-intents.message_content = True 
-intents.members = True
 
 class HerxinBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=intents, help_command=None)
+        self.cog_load_errors = []
 
     async def setup_hook(self):
-        extensions = [
-            'src.cogs.auditoria',
-            'src.cogs.tareas',
-            'src.cogs.utilidades',
-            'src.cogs.bienvenida',
-            'src.cogs.musica',
-            'src.cogs.temporales',
-            'src.cogs.ayuda',
-            'src.cogs.juegos',
-            # 'src.cogs.ayuda' # Descomenta si usas el de ayuda
+        # --- CARGAR COGS ---
+        # Lista de cogs (sin prefijo)
+        cogs_list = [
+            'auditoria',
+            'tareas',
+            'utilidades',
+            'bienvenida',
+            'musica',
+            'temporales',
+            'ayuda',
+            'juegos',
         ]
 
-        for ext in extensions:
+        for ext in cogs_list:
+            loaded = False
+            error_msg = ""
+            # Intentar cargar con prefijo 'cogs.' (común si se ejecuta desde src/ o script directo)
             try:
-                await self.load_extension(ext)
-                logging.info(f"⚙️  Módulo cargado: {ext}")
+                await self.load_extension(f"cogs.{ext}")
+                logging.info(f"⚙️  Módulo cargado: cogs.{ext}")
+                loaded = True
             except Exception as e:
-                logging.error(f"❌ Error cargando {ext}: {e}")
+                error_msg = str(e)
+
+            # Si falló, intentar con 'src.cogs.' (común si se ejecuta desde root como módulo)
+            if not loaded:
+                try:
+                    await self.load_extension(f"src.cogs.{ext}")
+                    logging.info(f"⚙️  Módulo cargado: src.cogs.{ext}")
+                    loaded = True
+                except Exception as e:
+                    full_error = f"❌ Error cargando {ext}: {e} | Previo: {error_msg}"
+                    logging.error(full_error)
+                    self.cog_load_errors.append(f"**{ext}**: {e}")
+
+        # --- SYNC AUTOMÁTICO DE SLASH COMMANDS ---
+        try:
+            synced = await self.tree.sync()
+            logging.info(f"🔄 Sync inicial completado: {len(synced)} comandos.")
+        except Exception as e:
+            logging.error(f"❌ Error en sync inicial: {e}")
 
     async def on_ready(self):
         logging.info(f'✅ Logueado como: {self.user}')
+        logging.info(f'📂 Directorio de trabajo actual: {os.getcwd()}')
         await self.change_presence(activity=discord.Game(name="version v1.0"))
+
+        # --- CONECTAR NODO PÚBLICO DE LAVALINK ---
+        try:
+            node = wavelink.Node(
+                uri='http://lavalink.serenetia.com:80',
+                password='https://dsc.gg/ajidevserver'
+            )
+            await wavelink.Pool.connect(client=self, nodes=[node])
+            logging.info("🔊 Nodo Lavalink conectado")
+        except Exception as e:
+            logging.error(f"❌ Error conectando al nodo Lavalink: {e}")
 
 bot = HerxinBot()
 
-# --- COMANDO DE SYNC MEJORADO ---
+# --- COMANDO DE DIAGNÓSTICO ---
+@bot.command()
+async def debug(ctx):
+    """Muestra el estado de los módulos y errores de carga."""
+    loaded = list(bot.extensions.keys())
+    
+    msg = f"📂 **Directorio:** `{os.getcwd()}`\n"
+    msg += f"🧩 **Cogs cargados ({len(loaded)}):**\n`{', '.join(loaded)}`\n\n"
+    
+    if bot.cog_load_errors:
+        msg += "⚠️ **Errores de carga:**\n"
+        for err in bot.cog_load_errors:
+            msg += f"- {err}\n"
+    else:
+        msg += "✅ **No hubo errores de carga.**"
+        
+    await ctx.send(msg)
+
+# --- COMANDO DE SYNC MANUAL ---
 @bot.command()
 async def sync(ctx, opcion: str = None):
-    """
-    !sync        -> Sincroniza solo este servidor (Rápido)
-    !sync global -> Borra comandos viejos de la nube (Lento pero efectivo)
-    """
     if opcion == "global":
-        msg = await ctx.send("🌍 **Sincronizando Globalmente...**\nEsto borrará los comandos viejos (`/add`) de la nube.\nPuede tardar unos segundos...")
+        msg = await ctx.send("🌍 **Sincronizando Globalmente...**")
         try:
-            # Esto actualiza la lista global de Discord con lo que tienes AHORA
             synced = await bot.tree.sync()
-            await msg.edit(content=f"✅ **¡Limpieza Global completada!**\nComandos actuales: {len(synced)}.\n\n*Nota: Si aún ves el comando viejo, presiona Ctrl + R en Discord.*")
-            logging.info(f"Sync Global: {len(synced)} comandos.")
+            await msg.edit(content=f"✅ **Sync Global completado:** {len(synced)} comandos.")
         except Exception as e:
             await msg.edit(content=f"❌ Error: {e}")
     else:
@@ -64,10 +98,12 @@ async def sync(ctx, opcion: str = None):
         try:
             bot.tree.copy_global_to(guild=ctx.guild)
             synced = await bot.tree.sync(guild=ctx.guild)
-            await msg.edit(content=f"✅ **¡Sincronización Local lista!** {len(synced)} comandos activos.")
+            await msg.edit(content=f"✅ **Sync Local completado:** {len(synced)} comandos.")
         except Exception as e:
             await msg.edit(content=f"❌ Error: {e}")
 
 if __name__ == "__main__":
     if TOKEN:
         bot.run(TOKEN)
+    else:
+        print("❌ ERROR: No se encontró DISCORD_TOKEN en el archivo .env")
